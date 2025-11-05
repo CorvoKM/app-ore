@@ -25,14 +25,12 @@ def parse_employee_csv(file):
     header = []
     ore_previste_totali = {}
 
-    # Riconosce una riga "Nome Cognome;01;02;...;TOT"
     pattern_name = re.compile(r'^([A-Za-zÀ-ÿ]+\s+[A-Za-zÀ-ÿ]+);(0[1-9]|[12][0-9]|3[01]);')
 
     for line in lines:
         if not line or line.strip().startswith(";;;;;;;;;;;;;;;;"):
             continue
 
-        # Inizio nuovo blocco dipendente
         if pattern_name.match(line):
             current_name = line.split(";")[0].strip()
             raw_header = line.split(";")[1:]
@@ -42,17 +40,18 @@ def parse_employee_csv(file):
                 if h.upper() in ("TOT", "TOTAL", "TOTALE", "TOT."):
                     tot_index = len(header) - 1 - idx
                     break
-            header_for_days = header[:tot_index] if tot_index is not None else header[:]
+            if tot_index is not None:
+                header_for_days = header[:tot_index]
+            else:
+                header_for_days = header[:]
             continue
 
-        # Riga con ore per tipo
         if current_name and ";" in line:
             parts = line.split(";")
             label = parts[0].strip()
             raw_values = parts[1:]
             values = [v.strip().replace(",", ".") for v in raw_values]
 
-            # Gestione Ore Previste
             if label.lower().startswith("ore previste"):
                 last_num = None
                 for v in reversed(values):
@@ -61,16 +60,11 @@ def parse_employee_csv(file):
                         break
                 if last_num is not None:
                     try:
-                        # Rimuove separatori migliaia tipo "1.234,5" → "1234.5"
-                        cleaned = re.sub(r'(?<=\d)[\.,](?=\d{3}\b)', '', last_num)
-                        # Converte la virgola decimale in punto per compatibilità float()
-                        cleaned = cleaned.replace(',', '.')
-                        ore_previste_totali[current_name] = float(cleaned)
+                        ore_previste_totali[current_name] = float(last_num.replace(",", "."))
                     except:
                         ore_previste_totali[current_name] = None
                 continue
 
-            # Altri tipi di ore
             for i in range(len(header_for_days)):
                 if i >= len(values):
                     continue
@@ -91,8 +85,10 @@ def parse_employee_csv(file):
                     })
 
     df = pd.DataFrame(records)
+
     if not df.empty:
         df["Ore Previste Totali"] = df["Nome"].map(ore_previste_totali)
+
     return df
 
 
@@ -176,7 +172,6 @@ if uploaded_files:
         confronto["Differenza"] = confronto["Ore"] - confronto["Ore Previste Totali"]
 
         st.dataframe(confronto)
-        st.bar_chart(confronto[["Ore", "Ore Previste Totali"]])
 
         # ======= INVIO A NOTION =======
         st.divider()
