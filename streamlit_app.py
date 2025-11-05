@@ -2,132 +2,118 @@ import streamlit as st
 import pandas as pd
 import re
 
-st.set_page_config(page_title="Ore Dipendenti - Analisi", layout="wide")
-
-st.title("📊 Analisi Ore Dipendenti")
-st.write("Carica i file CSV mensili (es. Agosto, Settembre, Ottobre) per analizzare le ore effettive e confrontarle con quelle previste.")
-
-
-# --- FUNZIONE DI PARSING ---
-def parse_employee_csv(file):
-    text = file.getvalue().decode("latin1")
-    lines = text.splitlines()
-    records = []
+# -------------------------------
+# FUNZIONE PER PARSARE I FILE CSV
+# -------------------------------
+def parse_employee_hours(file_content: str):
+    lines = [line.strip() for line in file_content.splitlines() if line.strip()]
+    employees = {}
     current_name = None
-    header = []
-    ore_previste_totali = {}
-
-    pattern_name = re.compile(r'^([A-Za-zÀ-ÿ]+\s+[A-Za-zÀ-ÿ]+);(0[1-9]|[12][0-9]|3[01]);')
+    current_section = {}
 
     for line in lines:
-        if not line or line.strip().startswith(";;;;;;;;;;;;;;;;"):
-            continue
-
-        # Nuovo blocco dipendente
-        if pattern_name.match(line):
+        # Identifica il nome del dipendente
+        if re.match(r"^[A-ZÀ-Ú][a-zà-ú]+\s[A-ZÀ-Ú][a-zà-ú]+", line):
+            if current_name:
+                employees[current_name] = current_section
             current_name = line.split(";")[0].strip()
-            raw_header = line.split(";")[1:]
-            header = [h.strip() for h in raw_header if h.strip() != ""]
-            tot_index = None
-            for idx, h in enumerate(header[::-1]):
-                if h.upper() in ("TOT", "TOTAL", "TOTALE", "TOT."):
-                    tot_index = len(header) - 1 - idx
-                    break
-            if tot_index is not None:
-                header_for_days = header[:tot_index]
-            else:
-                header_for_days = header[:]
-            continue
-
-        # Riga di dati
-        if current_name and ";" in line:
+            current_section = {}
+        # Righe che contengono i tipi di ore
+        elif ";" in line and current_name:
             parts = line.split(";")
-            label = parts[0].strip()
-            raw_values = parts[1:]
-            values = [v.strip().replace(",", ".") for v in raw_values]
+            category = parts[0].strip()
+            values = [v.strip().replace(",", ".") for v in parts[1:] if v.strip() != ""]
+            # Prende l'ultimo valore numerico (TOT)
+            try:
+                total = float(values[-1])
+            except ValueError:
+                total = 0.0
+            current_section[category] = total
 
-            # Riga "Ore Previste"
-            if label.lower().startswith("ore previste"):
-                last_num = None
-                for v in reversed(values):
-                    if v and re.match(r'^[\d]+(?:[\.,]\d+)?$', v):
-                        last_num = v
-                        break
-                if last_num is not None:
-                    try:
-                        ore_previste_totali[current_name] = float(last_num.replace(",", "."))
-                    except:
-                        ore_previste_totali[current_name] = None
-                continue
-
-            # Riga "Ordinarie", "Straordinari", ecc.
-            for i in range(len(header_for_days)):
-                if i >= len(values):
-                    continue
-                val = values[i]
-                if not val or val in ("0", ""):
-                    continue
-                if re.match(r'^[\d]+(?:[\.,]\d+)?$', val):
-                    try:
-                        ore = float(val.replace(",", "."))
-                    except:
-                        continue
-                    giorno = header_for_days[i]
-                    records.append({
-                        "Nome": current_name,
-                        "Data": giorno,
-                        "Tipo": label,
-                        "Ore": ore
-                    })
-
-    df = pd.DataFrame(records)
-    if not df.empty:
-        df["Ore Previste Totali"] = df["Nome"].map(ore_previste_totali)
-    df = df[df["Data"].str.upper() != "TOT"]
-
-    return df
+    if current_name:
+        employees[current_name] = current_section
+    return employees
 
 
-# --- UPLOAD FILES ---
-uploaded_files = st.file_uploader("📂 Carica uno o più file CSV", type=["csv"], accept_multiple_files=True)
+# -------------------------------
+# INTERFACCIA STREAMLIT
+# -------------------------------
+st.set_page_config(page_title="Analisi Ore Dipendenti", layout="wide")
+st.title("📊 Analisi Ore Dipendenti (Automatica)")
+
+uploaded_files = st.file_uploader(
+    "Carica uno o più file CSV delle ore mensili",
+    type=["csv"],
+    accept_multiple_files=True,
+)
 
 if uploaded_files:
-    all_data = []
-    for file in uploaded_files:
-        df = parse_employee_csv(file)
-        df["Mese"] = re.sub(r"[^A-Za-zÀ-ÿ]", "", file.name.replace(".csv", ""))
-        all_data.append(df)
+    all_data = {}
 
-    if all_data:
-        data = pd.concat(all_data, ignore_index=True)
+    # Unisci i dati di tutti i file caricati
+    for uploaded_file in uploaded_files:
+        content = uploaded_file.read().decode("latin1")
+        employees = parse_employee_hours(content)
 
-        # Aggregazione
-        ore_totali = data.groupby("Nome")["Ore"].sum().reset_index(name="Ore Totali")
-        ore_previste = data[["Nome", "Ore Previste Totali"]].drop_duplicates(subset="Nome")
-        merged = pd.merge(ore_totali, ore_previste, on="Nome", how="left")
+        for name, data in employees.items():
+            if name not in all_data:
+                all_data[name] = {}
+            for k, v in data.items():
+                all_data[name][k] = all_data[name].get(k, 0) + v
 
-        merged["Δ Ore (Effettive - Previste)"] = merged["Ore Totali"] - merged["Ore Previste Totali"]
+    # Crea DataFrame riepilogativo
+    df = pd.DataFrame(all_data).fillna(0).T
 
-        st.subheader("📈 Confronto Ore Effettive vs Previste")
+    # Seleziona solo le colonne significative
+    if "Ore Previste" in df.columns:
+        df["Ore Previste Totali"] = df["Ore Previste"]
+        df.drop(columns=["Ore Previste"], inplace=True)
+    else:
+        df["Ore Previste Totali"] = 0
 
-        # Grafico principale
-        st.bar_chart(
-            merged.set_index("Nome")[["Ore Totali", "Ore Previste Totali"]],
-            use_container_width=True,
-            height=400
-        )
+    # Calcolo ore effettive (escludendo Ore Previste)
+    excluded = ["Ore Previste", "Ore Previste Totali"]
+    df["Ore Totali Effettive"] = df[
+        [col for col in df.columns if col not in excluded]
+    ].sum(axis=1)
 
-        # Grafico differenze
-        st.subheader("⚖️ Differenza tra Ore Effettive e Previste")
-        st.bar_chart(
-            merged.set_index("Nome")[["Δ Ore (Effettive - Previste)"]],
-            use_container_width=True,
-            height=300
-        )
+    # Rapporto rispetto alle ore previste totali
+    df["% Completamento"] = (
+        (df["Ore Totali Effettive"] / df["Ore Previste Totali"]) * 100
+    ).replace([float("inf"), -float("inf")], 0).fillna(0).round(1)
 
-        # Tabella finale
-        st.subheader("📋 Riepilogo")
-        st.dataframe(
-            merged.sort_values(by="Δ Ore (Effettive - Previste)", ascending=False),
-            hide_index=True
-        )
+    # -------------------------------
+    # SEZIONE RISULTATI
+    # -------------------------------
+    st.header("📋 Riepilogo per Dipendente")
+    st.dataframe(
+        df[
+            [
+                "Ore Previste Totali",
+                "Ore Totali Effettive",
+                "% Completamento",
+            ]
+        ].style.format(
+            {"Ore Previste Totali": "{:.1f}", "Ore Totali Effettive": "{:.1f}", "% Completamento": "{:.1f}%"}
+        ),
+        use_container_width=True,
+    )
+
+    # -------------------------------
+    # SEZIONE GRAFICI
+    # -------------------------------
+    st.header("📈 Confronto Ore Previste vs Effettive")
+    st.bar_chart(
+        df[["Ore Previste Totali", "Ore Totali Effettive"]],
+        use_container_width=True,
+    )
+
+    st.header("📊 Percentuale di Completamento")
+    st.bar_chart(
+        df[["% Completamento"]],
+        use_container_width=True,
+    )
+
+    st.success("✅ Analisi completata con successo!")
+else:
+    st.info("📂 Carica i file CSV per iniziare l'analisi.")
