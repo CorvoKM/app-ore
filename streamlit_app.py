@@ -155,11 +155,11 @@ if uploaded_files:
 
         with col1:
             ore_per_dipendente = combined_df.groupby("Nome")["Ore"].sum().sort_values(ascending=False)
-            st.bar_chart(ore_per_dipendente, use_container_width=True)
+            st.bar_chart(ore_per_dipendente, width='stretch')
 
         with col2:
             ore_per_tipo = combined_df.groupby("Tipo")["Ore"].sum().sort_values(ascending=False)
-            st.bar_chart(ore_per_tipo, use_container_width=True)
+            st.bar_chart(ore_per_tipo, width='stretch')
 
         st.divider()
         st.subheader("📈 Confronto Ore Effettive vs Previste")
