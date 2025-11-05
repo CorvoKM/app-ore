@@ -7,7 +7,7 @@ import requests
 st.set_page_config(page_title="Gestione Ore Dipendenti", page_icon="🧾", layout="wide")
 
 NOTION_TOKEN = st.secrets.get("NOTION_TOKEN", None)
-NOTION_DATABASE_ID = st.secrets.get("NOTION_DATABASE_ID", None)
+DATABASE_ID = st.secrets.get("DATABASE_ID", None)
 
 # ======= FUNZIONI =======
 
