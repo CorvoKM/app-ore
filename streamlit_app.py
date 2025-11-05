@@ -61,7 +61,11 @@ def parse_employee_csv(file):
                         break
                 if last_num is not None:
                     try:
-                        ore_previste_totali[current_name] = float(last_num.replace(",", "."))
+                        # Rimuove separatori migliaia tipo "1.234,5" → "1234.5"
+                        cleaned = re.sub(r'(?<=\d)[\.,](?=\d{3}\b)', '', last_num)
+                        # Converte la virgola decimale in punto per compatibilità float()
+                        cleaned = cleaned.replace(',', '.')
+                        ore_previste_totali[current_name] = float(cleaned)
                     except:
                         ore_previste_totali[current_name] = None
                 continue
