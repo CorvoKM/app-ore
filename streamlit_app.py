@@ -12,7 +12,12 @@ NOTION_DATABASE_ID = st.secrets.get("NOTION_DATABASE_ID", None)
 # ======= FUNZIONI =======
 
 def parse_employee_csv(file):
-    """Analizza un CSV mensile di ore lavorate e restituisce un DataFrame pulito con ore effettive e ore previste totali."""
+    """
+    Analizza un CSV mensile di ore lavorate e restituisce un DataFrame pulito:
+    - estrae righe "Tipo" (Ordinarie, Straordinari, Paternità, ecc.) come record giornalieri
+    - cattura il valore TOT di "Ore Previste" come 'Ore Previste Totali' (riferimento)
+    - evita di inserire la colonna TOT come giorno per non raddoppiare i conti
+    """
     text = file.getvalue().decode("latin1")
     lines = text.splitlines()
     records = []
@@ -20,52 +25,87 @@ def parse_employee_csv(file):
     header = []
     ore_previste_totali = {}
 
-    # Riconosce una riga nome cognome seguita da un giorno (es. Baldo Vittorio;01;)
+    # Riconosce una riga "Nome Cognome;01;02;...;TOT" (obbliga che dopo il nome compaia un giorno 01-31)
     pattern_name = re.compile(r'^([A-Za-zÀ-ÿ]+\s+[A-Za-zÀ-ÿ]+);(0[1-9]|[12][0-9]|3[01]);')
 
     for line in lines:
-        if pattern_name.match(line):
-            current_name = line.split(";")[0].strip()
-            header = line.split(";")[1:]
-            header = [h.strip() for h in header if h.strip()]
+        if not line or line.strip().startswith(";;;;;;;;;;;;;;;;"):
             continue
 
+        # Inizio nuovo blocco dipendente + header (giorni + eventualmente "TOT")
+        if pattern_name.match(line):
+            current_name = line.split(";")[0].strip()
+            raw_header = line.split(";")[1:]
+            # normalizzo header e rimuovo eventuali celle vuote finali
+            header = [h.strip() for h in raw_header if h.strip() != ""]
+            # ricerca indice della colonna TOT (se presente) per poterla ignorare nei record giornalieri
+            tot_index = None
+            for idx, h in enumerate(header[::-1]):
+                if h.upper() in ("TOT", "TOTAL", "TOTALE", "TOT."):
+                    # convert index from reversed list to normal index
+                    tot_index = len(header) - 1 - idx
+                    break
+            # se TOT è presente, rimuoviamolo dalla lista dei giorni che useremo per i record
+            if tot_index is not None:
+                header_for_days = header[:tot_index]
+            else:
+                header_for_days = header[:]
+            continue
+
+        # Se siamo all'interno di un blocco dipendente e la riga contiene separatore ;
         if current_name and ";" in line:
             parts = line.split(";")
             label = parts[0].strip()
-            values = [v.strip().replace(",", ".") for v in parts[1:] if v.strip() != ""]
+            raw_values = parts[1:]
 
-            # Caso: "Ore Previste" giornaliere → ignorare completamente
-            if label.lower().startswith("ore previste") and len(values) > 1:
+            # normalize values: keep original length to align con header indices
+            values = [v.strip().replace(",", ".") for v in raw_values]
+
+            # ---- GESTIONE ORE PREVISTE ----
+            # Se la riga è "Ore Previste" prendi l'ultimo valore numerico come totale di riferimento
+            if label.lower().startswith("ore previste"):
+                # cerca l'ultimo valore numerico nella riga (scorri da destra a sinistra)
+                last_num = None
+                for v in reversed(values):
+                    if v and re.match(r'^[\d]+(?:[\.,]\d+)?$', v):
+                        last_num = v
+                        break
+                if last_num is not None:
+                    try:
+                        ore_previste_totali[current_name] = float(last_num.replace(",", "."))
+                    except:
+                        ore_previste_totali[current_name] = None
+                # non generare record giornalieri per "Ore Previste"
                 continue
 
-            # Caso: "Ore Previste" totali → salvare solo il totale
-            if label.lower().startswith("ore previste") and len(values) == 1:
-                try:
-                    ore_previste_totali[current_name] = float(values[0])
-                except ValueError:
-                    ore_previste_totali[current_name] = None
-                continue
-
-            # Tutte le altre righe = ore effettive
-            for i, val in enumerate(values):
-                if not val or val == "0":
+            # ---- GESTIONE ALTRE RIGHE (ore effettive) ----
+            # Iteriamo solo sulle colonne che rappresentano giorni (header_for_days)
+            for i in range(len(header_for_days)):
+                if i >= len(values):
                     continue
-                try:
-                    ore = float(val)
-                except ValueError:
+                val = values[i]
+                if not val or val in ("0", ""):
                     continue
-                giorno = header[i] if i < len(header) else f"Giorno{i+1}"
-                records.append({
-                    "Nome": current_name,
-                    "Data": giorno,
-                    "Tipo": label,
-                    "Ore": ore
-                })
+                # se il valore è numerico lo prendo
+                if re.match(r'^[\d]+(?:[\.,]\d+)?$', val):
+                    try:
+                        ore = float(val.replace(",", "."))
+                    except:
+                        continue
+                    giorno = header_for_days[i]  # es. "01", "02", ...
+                    records.append({
+                        "Nome": current_name,
+                        "Data": giorno,
+                        "Tipo": label,
+                        "Ore": ore
+                    })
+                else:
+                    # non-numerico: skip
+                    continue
 
     df = pd.DataFrame(records)
 
-    # Aggiunge ore previste totali come colonna di riferimento
+    # Aggiunge ore previste totali come colonna di riferimento (mappa per nome)
     if not df.empty:
         df["Ore Previste Totali"] = df["Nome"].map(ore_previste_totali)
 
