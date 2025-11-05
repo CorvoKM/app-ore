@@ -94,7 +94,7 @@ def parse_employee_csv(file):
 
 def send_to_notion(df):
     """Invia i dati alla tabella Notion specificata nei secrets Streamlit."""
-    if not (NOTION_TOKEN and NOTION_DATABASE_ID):
+    if not (NOTION_TOKEN and DATABASE_ID):
         st.warning("⚠️ Token Notion o Database ID mancanti nei secrets. Operazione saltata.")
         return
 
@@ -106,7 +106,7 @@ def send_to_notion(df):
 
     for _, row in df.iterrows():
         data = {
-            "parent": {"database_id": NOTION_DATABASE_ID},
+            "parent": {"database_id": DATABASE_ID},
             "properties": {
                 "Nome": {"title": [{"text": {"content": row["Nome"]}}]},
                 "Data": {"rich_text": [{"text": {"content": str(row["Data"])}}]},
