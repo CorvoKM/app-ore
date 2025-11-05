@@ -164,11 +164,15 @@ if uploaded_files:
         st.divider()
         st.subheader("📈 Confronto Ore Effettive vs Previste")
 
-        confronto = (
-            combined_df.groupby("Nome")[["Ore", "Ore Previste Totali"]]
-            .sum()
-            .fillna(0)
+        # NOTE: non sommare 'Ore Previste Totali' per ogni riga (viene ripetuto su ogni giorno),
+        # altrimenti il totale previsto viene moltiplicato per il numero di record.
+        # Prendiamo un singolo valore per dipendente (usando .max() per sicurezza) e sommiamo
+        # solo le ore effettive.
+        ore_effettive = combined_df.groupby("Nome")["Ore"].sum()
+        ore_previste = (
+            combined_df.groupby("Nome")["Ore Previste Totali"].max()
         )
+        confronto = pd.DataFrame({"Ore": ore_effettive, "Ore Previste Totali": ore_previste}).fillna(0)
         confronto["Differenza"] = confronto["Ore"] - confronto["Ore Previste Totali"]
 
         st.dataframe(confronto)
