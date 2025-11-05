@@ -18,12 +18,16 @@ def parse_employee_hours(file_content: str):
                 employees[current_name] = current_section
             current_name = line.split(";")[0].strip()
             current_section = {}
-        # Righe che contengono i tipi di ore
         elif ";" in line and current_name:
             parts = line.split(";")
             category = parts[0].strip()
+            # Se non ci sono numeri dopo il punto e virgola, salta
+            if len(parts) < 2:
+                continue
             values = [v.strip().replace(",", ".") for v in parts[1:] if v.strip() != ""]
-            # Prende l'ultimo valore numerico (TOT)
+            # Evita righe vuote o senza numeri
+            if not values:
+                continue
             try:
                 total = float(values[-1])
             except ValueError:
@@ -64,10 +68,11 @@ if uploaded_files:
     # Crea DataFrame riepilogativo
     df = pd.DataFrame(all_data).fillna(0).T
 
-    # Seleziona solo le colonne significative
-    if "Ore Previste" in df.columns:
-        df["Ore Previste Totali"] = df["Ore Previste"]
-        df.drop(columns=["Ore Previste"], inplace=True)
+    # Gestisci correttamente le colonne previste
+    previste_col = [c for c in df.columns if "previste" in c.lower()]
+    if previste_col:
+        df["Ore Previste Totali"] = df[previste_col].sum(axis=1)
+        df.drop(columns=previste_col, inplace=True)
     else:
         df["Ore Previste Totali"] = 0
 
