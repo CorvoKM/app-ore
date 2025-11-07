@@ -219,7 +219,21 @@ if uploaded_files:
         st.divider()
         st.subheader("📤 Invia a Notion")
         if st.button("Invia ora 🚀"):
-            send_to_notion(combined_df)
-            st.success("✅ Dati inviati a Notion con successo!")
+            with st.spinner("Invio dati a Notion..."):
+                result = send_to_notion(combined_df)
+
+            # send_to_notion already uses st.warning/st.error/st.success for details,
+            # but also returns a structured result we can summarize here.
+            if result is None:
+                # Nothing else to do: send_to_notion already emitted warnings/errors.
+                pass
+            else:
+                succ = result.get("successes", 0)
+                fails = result.get("failures", [])
+                st.info(f"Operazione completata: {succ} successi, {len(fails)} errori.")
+                if fails:
+                    with st.expander("Dettagli errori"):
+                        for f in fails:
+                            st.write(f)
 else:
     st.info("⬆️ Carica almeno un file CSV per iniziare.")
