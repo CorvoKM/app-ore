@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import requests
+import time
 
 # ======= CONFIGURAZIONE =======
 st.set_page_config(page_title="Gestione Ore Dipendenti", page_icon="🧾", layout="wide")
@@ -93,7 +94,7 @@ def parse_employee_csv(file):
 
 
 def send_to_notion(df):
-    """Invia i dati alla tabella Notion specificata nei secrets Streamlit."""
+    """Invia i dati alla tabella Notion con logging degli errori e conversioni sicure."""
     if not (NOTION_TOKEN and DATABASE_ID):
         st.warning("⚠️ Token Notion o Database ID mancanti nei secrets. Operazione saltata.")
         return
@@ -104,18 +105,55 @@ def send_to_notion(df):
         "Notion-Version": "2022-06-28"
     }
 
-    for _, row in df.iterrows():
-        data = {
-            "parent": {"database_id": DATABASE_ID},
-            "properties": {
-                "Nome": {"title": [{"text": {"content": row["Nome"]}}]},
-                "Data": {"rich_text": [{"text": {"content": str(row["Data"])}}]},
-                "Tipo": {"select": {"name": row["Tipo"]}},
-                "Ore": {"number": row["Ore"]},
-                "Ore Previste Totali": {"number": row.get("Ore Previste Totali")}
-            }
+    successes = 0
+    failures = []
+
+    for idx, row in df.iterrows():
+        nome = str(row.get("Nome", "") or "")
+        data_text = str(row.get("Data", "") or "")
+        tipo = row.get("Tipo", None)
+        ore = row.get("Ore", None)
+        ore_previste = row.get("Ore Previste Totali", None)
+
+        properties = {
+            "Nome": {"title": [{"text": {"content": nome}}]},
+            "Data": {"rich_text": [{"text": {"content": data_text}}]}
         }
-        requests.post("https://api.notion.com/v1/pages", headers=headers, json=data)
+        if tipo:
+            properties["Tipo"] = {"select": {"name": str(tipo)}}
+        # Only include numeric properties when they are valid numbers
+        try:
+            if pd.notna(ore):
+                properties["Ore"] = {"number": float(ore)}
+        except Exception:
+            pass
+        try:
+            if pd.notna(ore_previste):
+                properties["Ore Previste Totali"] = {"number": float(ore_previste)}
+        except Exception:
+            pass
+
+        payload = {"parent": {"database_id": DATABASE_ID}, "properties": properties}
+
+        try:
+            resp = requests.post("https://api.notion.com/v1/pages", headers=headers, json=payload, timeout=10)
+            if resp.status_code in (200, 201):
+                successes += 1
+            else:
+                failures.append({"index": idx, "status": resp.status_code, "text": resp.text})
+        except requests.RequestException as e:
+            failures.append({"index": idx, "exception": str(e)})
+
+        # small pause to reduce chance of hitting rate limits
+        time.sleep(0.2)
+
+    if successes:
+        st.success(f"✅ {successes} pagine create su Notion.")
+    if failures:
+        st.error(f"⚠️ {len(failures)} errori durante l'invio. Vedi dettagli sotto.")
+        for f in failures[:20]:
+            st.write(f)
+    return {"successes": successes, "failures": failures}
 
 
 # ======= INTERFACCIA STREAMLIT =======
